@@ -18,13 +18,11 @@ import javax.servlet.http.HttpSession;
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.HttpConnectionFactory;
-import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.SslConnectionFactory;
 import org.eclipse.jetty.server.handler.HandlerList;
-import org.eclipse.jetty.server.handler.ShutdownHandler;
 import org.eclipse.jetty.servlet.DefaultServlet;
 import org.eclipse.jetty.servlet.ServletContextHandler;
 import org.eclipse.jetty.servlet.ServletHolder;
@@ -79,7 +77,6 @@ public abstract class WebApp {
 			return responseJSON;
 		}
 
-		@Override
 		protected void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
 
 			String strResponse = null;
@@ -123,7 +120,7 @@ public abstract class WebApp {
 		https.addCustomizer(new SecureRequestCustomizer());
 
 		if (WebApp.class.getResource("/key.jks") != null) {
-			SslContextFactory sslContextFactory = new SslContextFactory();
+			SslContextFactory.Server sslContextFactory = new SslContextFactory.Server();
 			sslContextFactory.setKeyStorePath(WebApp.class.getResource("/key.jks").toExternalForm());
 			sslContextFactory.setKeyStorePassword(webapp.getPasswordSSL());
 			sslContextFactory.setKeyManagerPassword(webapp.getPasswordSSL());
@@ -157,16 +154,8 @@ public abstract class WebApp {
 		holderPwd.setInitParameter("dirAllowed", "true");
 		context.addServlet(holderPwd, "/");
 
-		ShutdownHandler shutdown = new ShutdownHandler(WebApp.webapp.password, false, true) {
-			@Override
-			protected void doShutdown(Request baseRequest, HttpServletResponse response) throws IOException {
-				WebApp.webapp.exit();
-				super.doShutdown(baseRequest, response);
-			}
-		};
-
 		HandlerList handlers = new HandlerList();
-		handlers.setHandlers(new Handler[] { shutdown, context });
+		handlers.setHandlers(new Handler[] { context });
 		server.setHandler(handlers);
 
 		try {
