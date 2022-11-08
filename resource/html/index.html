@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="ISO-8859-1">
+<title>Insert title here</title>
+
+<style>
+* {
+max-width:800px;
+min-height:30px;
+width: 100%;
+margin: auto;
+margin-top: 6px;
+font-size: large;
+}
+
+button {
+min-height:60px;
+}
+</style>
+
+<script type="text/javascript">
+
+var privateKey = null;
+var publicKey = null;
+var pubkey64 = null;
+
+/*
+==================================================
+===================== BUTTONS ====================
+==================================================	
+*/
+
+function btn_genKeys() {
+	var keyPair = window.crypto.subtle.generateKey( 
+	    {
+	      name: "ECDSA",
+	      namedCurve: "P-256"
+	    },
+	    true,
+	    ["sign", "verify"]
+	  ).then((keyPair) => {
+		exportCryptoKey(keyPair.privateKey);		
+  });
+}
+
+function btn_loadKeys() {
+	jwkKey = get("#keysTextArea").value;
+	if (jwkKey.trim() == "") return;
+	
+	json = JSON.parse(jwkKey);
+	json["crv"] = "P-256";
+	json["kty"] = "EC";
+	
+	importKey(json, ["sign"]).then((x) => {
+	    return privateKey = x;
+	  });
+	delete json["d"];
+	importKey(json, ["verify"]).then((x) => {
+	    return publicKey = x;
+	  });
+	
+	delete json["crv"];
+	delete json["kty"];		
+	
+	walletScreen();
+	
+	pubkeyHex = "04" + toHexString(base64DecodeURL(json.x)) + toHexString(base64DecodeURL(json.y));
+	pubkey64 = base64EncodeURL(hexToBytes(pubkeyHex));
+	get("#pubkey64").innerHTML = pubkey64;
+    //console.log(pubkeyHex);	
+}
+
+function btn_copyKeys() {
+	text = get("#keysTextArea").value;
+	if (text == "") return;
+	btn_copy(text);
+}
+
+function btn_copyAddress() {
+	btn_copy(pubkey64);
+}
+
+function btn_copy(text) {
+	
+    if (window.clipboardData && window.clipboardData.setData) {
+        // Internet Explorer-specific code path to prevent textarea being shown while dialog is visible.
+        return window.clipboardData.setData("Text", text);
+
+    }
+    else if (document.queryCommandSupported && document.queryCommandSupported("copy")) {
+        var textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";  // Prevent scrolling to bottom of page in Microsoft Edge.
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            return document.execCommand("copy");  // Security exception may be thrown by some browsers.
+        }
+        catch (ex) {
+            console.warn("Copy to clipboard failed.", ex);
+            return false;
+        }
+        finally {
+            document.body.removeChild(textarea);	            
+        }
+    }
+}
+
+function btn_add(amount) {
+	if (amount == 0) {
+		get("#amount").value = "";
+		get("#to").value = "";
+	}
+	else {
+		if (get("#amount").value == "") get("#amount").value = 0;
+		get("#amount").value = (get("#amount").value/1) + amount;		
+	}
+}
+
+function btn_mul(amount) {
+	if (get("#amount").value == "") return;
+	get("#amount").value = (get("#amount").value/1) * amount;			
+}	
+
+function btn_transfer() {
+	to = get("#to").value;
+	amount = get("#amount").value;
+	
+	if (to == "") {
+		error("send to?");
+		return;
+	}
+	if (amount == "") {
+		error("no amount");
+		return;
+	}
+	
+	transfer = prepareRequest(callBackTransfer);
+	
+	let enc = new TextEncoder();
+    signature = window.crypto.subtle.sign(
+	  	      {
+	  	        name: "ECDSA",
+	  	        hash: {name: "SHA-256"},
+	  	      },
+	  	      privateKey,
+	  	      enc.encode(address + to + amount)
+	  	    ).then((signature) =>{
+			    transfer.send(JSON.stringify({'method':'transfer', from:pubkey64, to:to, amount:amount, sign:base64EncodeURL(new Int8Array(signature))}));
+	  	    });	
+    
+	get("#amount").value = "";
+}  
+
+function callBackTransfer(json) {
+	 if (json["status"] == "success") status("Transfer completed successfully!");
+	 else error("error");
+}
+
+function callBackBalance(json) {
+	get("#balance").innerHTML = "<b>Sua conta - Saldo: " + json["balance"] + "</b>";		
+}
+
+function balanceLoop() {		
+	function getbalance() {			
+		if (pubkey64 != null) {
+			balanceRequest = prepareRequest(callBackBalance);    
+			balanceRequest.send(JSON.stringify({'method':'getBalance', pubkey:pubkey64}));
+		}
+		setTimeout(getbalance, 3*1000);			
+	}	
+	setTimeout(getbalance, 1);			
+} 
+
+/*
+==================================================
+=============== CRYPTO STUFF ==============
+==================================================	
+*/
+
+async function exportCryptoKey(key) {
+   const exported = await window.crypto.subtle.exportKey(
+     "jwk",
+     key
+   );
+   delete exported["alg"];
+   delete exported["crv"];
+   delete exported["kty"];
+   delete exported["key_ops"];
+   delete exported["ext"];    	    
+   jsonKey = JSON.stringify(exported, null, " ");
+   
+    // if address (address) contains '-' or '_' gen another key
+    pubkeyHex = "04" + toHexString(base64DecodeURL(exported.x)) + toHexString(base64DecodeURL(exported.y));	 	    
+    pubkey64 = base64EncodeURL(hexToBytes(pubkeyHex));   
+   
+   if (pubkey64.includes("-") || pubkey64.includes("_")) {
+		setTimeout(btn_genKeys, 1); // try again
+   } else {
+	   const exportKeyOutput = get("#keysTextArea"); 	    
+	   exportKeyOutput.value = jsonKey;
+   }
+ }
+ 
+function importKey(jwkKey, options) {
+	   return window.crypto.subtle.importKey(
+	     "jwk",
+	     jwkKey,
+     {
+       name: "ECDSA",
+       namedCurve: "P-256"
+     },
+	     true,
+	     options
+	   );
+ }    	  
+
+/*
+==================================================
+====================== UTILS =====================
+==================================================	
+*/	
+
+function prepareRequest(callback) {
+	var xmlhttp = new XMLHttpRequest();
+	xmlhttp.open("POST", "/irreal");
+	xmlhttp.setRequestHeader("Content-Type", "application/json");
+	xmlhttp.onreadystatechange = function() {
+        if (this.readyState == 4 && this.status == 200) {
+        	var json = JSON.parse(xmlhttp.responseText);
+        	callback(json);
+        }
+    };	    
+    return xmlhttp;		
+}	
+
+function hexToBytes(hex) {
+    for (var bytes = [], c = 0; c < hex.length; c += 2)
+    bytes.push(parseInt(hex.substr(c, 2), 16));
+    return bytes;
+}
+
+function toHexString(byteArray) {
+	  return Array.from(byteArray, function(byte) {
+	    return ('0' + (byte & 0xFF).toString(16)).slice(-2);
+	  }).join('')
+} 
+
+function base64DecodeURL(b64urlstring) {
+	  return new Uint8Array(atob(b64urlstring.replace(/-/g, '+').replace(/_/g, '/')).split('').map(val => {
+	    return val.charCodeAt(0);
+	  }));
+}
+
+function base64EncodeURL(byteArray) {
+	  return btoa(Array.from(new Uint8Array(byteArray)).map(val => {
+	    return String.fromCharCode(val);
+	  }).join('')).replace(/\+/g, '-').replace(/\//g, '_').replace(/\=/g, '');
+}	
+
+function get(x) {
+	return document.querySelector(x);
+}
+
+/*
+==================================================
+=================== SHOW / HIDE ==================
+==================================================	
+*/		
+function start() {	
+	initialScreen();
+	balanceLoop();
+}	
+
+function show(id) {
+	get(id).style.display = 'initial';
+}	
+
+function hide(id) {
+	get(id).style.display = 'none';
+}
+
+function initialScreen() {
+	show("#initialScreen");
+	hide("#walletScreen");	
+}
+
+function walletScreen() {
+	hide("#initialScreen");
+	show("#walletScreen");	
+}
+
+
+</script>
+
+</head>
+<body onload="start();">
+
+	<div id="initialScreen">
+	<b>Passo 1</b> - Crie um novo código (ou cole o antigo) e <b>salve-o num lugar seguro</b>.<br/>
+	<button onclick="btn_genKeys();">Criar novo código</button><br/>
+	<div><textarea style="width: 75%" id="keysTextArea"  rows="5"></textarea><button style="width: 20%; vertical-align: top; height: 100px" onclick="btn_copyKeys();">Copiar código</button></div>
+	<b>Passo 2</b> - Salvou o código num local seguro? Agora clique em <b>Carregar conta</b>.<br/>
+	<button onclick="btn_loadKeys();">Carregar conta</button><br/>
+	</div>
+
+	<div    id="walletScreen">
+	<button onclick="initialScreen();">Voltar</button>
+	<div    id="balance">Carregando saldo...</div>
+	<button id="pubkey64" style="font-size: small;" onclick="btn_copyAddress();"></button>	
+	<b>Transferir:</b>
+	<div>
+	<button style="width: 18%" onclick="btn_add(1);">  +1  </button>
+	<button style="width: 18%" onclick="btn_add(5);">  +5  </button>
+	<button style="width: 18%" onclick="btn_add(10);"> +10 </button>
+	<button style="width: 18%" onclick="btn_add(25);"> +25 </button>
+	<button style="width: 18%" onclick="btn_add(50);"> +50 </button>		
+	</div>
+	<div>
+	<button style="width: 18%" onclick="btn_mul(10);">    x10   </button>
+	<button style="width: 18%" onclick="btn_mul(100);">   x100  </button>
+	<button style="width: 18%" onclick="btn_mul(1000);">  x1000 </button>
+	<b>== $</b><input  style="width: 18%" id="amount" type="text" value="" readonly /><b>irReais</b><br/>
+	<b>Para:</b><input style="font-size: small;" id="to" class="add" type="text" value="" />			
+	</div>		
+	<div>	
+	<button onclick="btn_transfer();">Enviar</button>
+	<button onclick="btn_add(0);">Limpar</button>
+	</div>
+	</div>
+
+</body>
+</html>
